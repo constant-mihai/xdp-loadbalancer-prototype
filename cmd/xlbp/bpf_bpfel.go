@@ -61,7 +61,8 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	XdpStatsMap *ebpf.MapSpec `ebpf:"xdp_stats_map"`
+	ByteCounters   *ebpf.MapSpec `ebpf:"byte_counters"`
+	PacketCounters *ebpf.MapSpec `ebpf:"packet_counters"`
 }
 
 // bpfVariableSpecs contains global variables before they are loaded into the kernel.
@@ -90,12 +91,14 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	XdpStatsMap *ebpf.Map `ebpf:"xdp_stats_map"`
+	ByteCounters   *ebpf.Map `ebpf:"byte_counters"`
+	PacketCounters *ebpf.Map `ebpf:"packet_counters"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
-		m.XdpStatsMap,
+		m.ByteCounters,
+		m.PacketCounters,
 	)
 }
 

@@ -4,15 +4,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -22,7 +23,20 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux bpf xlbp.c -- -I../../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -verbose -tags linux bpf xlbp.c -- -I../../headers
+
+// TODO: I swear I did this in the past and know this was possible.
+// Providing -type counter_index for the bpf2go command should generate a counter part enum in go.
+// Instead I keep getting:
+// Error: collect C types: type name counter_index: not found
+// Until I figure out what's wrong this needs to be maintained by hand.
+type CounterIndex uint32
+
+const (
+	IngressPacketsIdx CounterIndex = 0
+	EgressPacketsIdx  CounterIndex = 1
+	DropPacketsIdx    CounterIndex = 2
+)
 
 var (
 	GitCommit          string
@@ -56,15 +70,34 @@ var (
 		},
 		[]string{"Commit", "Branch", "ApplicationVersion"},
 	)
+
+	packetCounter = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "xlbp",
+			Name:      "outside_interface_packets",
+			Help:      "Outside interface",
+		},
+		[]string{"name", "flow", "direction"},
+	)
+
+	byteCounter = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "xlbp",
+			Name:      "outside_interface_bytes",
+			Help:      "Outside interface",
+		},
+		[]string{"name", "flow", "direction"},
+	)
 )
 
 type Xlbp struct {
-	config   *Config
-	logger   *zap.Logger
-	metrics  *http.Server
-	wg       sync.WaitGroup
-	ebpfObjs *bpfObjects
-	link     link.Link
+	config     *Config
+	logger     *zap.Logger
+	metrics    *http.Server
+	wg         sync.WaitGroup
+	ebpfObjs   *bpfObjects
+	link       link.Link
+	inShutdown atomic.Bool // true when server is in shutdown
 }
 
 func NewApplication() (*Xlbp, error) {
@@ -136,9 +169,6 @@ func (xlbp *Xlbp) loadDataplane(ifcIp string) error {
 	if err != nil {
 		return fmt.Errorf("could not attach XDP program: %w", err)
 	}
-
-	log.Printf("Attached XDP program to iface %q (index %d)", iface.Name, iface.Index)
-	log.Printf("Press Ctrl-C to exit and remove the program")
 
 	return nil
 }
@@ -215,6 +245,7 @@ func (xlbp *Xlbp) initLogger() error {
 
 func (xlbp *Xlbp) Start() error {
 	xlbp.logger.Info("starting application")
+	xlbp.inShutdown.Store(false)
 	xlbpVersion.WithLabelValues(GitCommit, GitBranch, ApplicationVersion).Set(1)
 
 	xlbp.wg.Add(1)
@@ -228,11 +259,62 @@ func (xlbp *Xlbp) Start() error {
 		}
 	}()
 
+	xlbp.wg.Add(1)
+	go func() {
+		xlbp.logger.Info("starting bpf metrics scraper")
+		defer xlbp.wg.Done()
+		// Create a ticker to read counters every second
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			if xlbp.inShutdown.Load() {
+				return
+			}
+
+			<-ticker.C
+			readCounters(xlbp.logger, xlbp.ebpfObjs.PacketCounters, xlbp.ebpfObjs.ByteCounters)
+		}
+	}()
+
 	return nil
+}
+
+func readCounters(logger *zap.Logger, counters *ebpf.Map, bytes *ebpf.Map) {
+	key := uint32(IngressPacketsIdx)
+
+	var values []uint64
+	err := counters.Lookup(&key, &values)
+	if err != nil {
+		logger.Error("Failed to read packet counter", zap.Error(err))
+		return
+	}
+
+	// Sum all per-CPU values
+	var packetTotal uint64
+	for _, value := range values {
+		packetTotal += value
+	}
+
+	packetCounter.WithLabelValues("outside", "ingress", "upstream").Add(float64(packetTotal))
+
+	err = bytes.Lookup(&key, &values)
+	if err != nil {
+		logger.Error("Failed to read byte counter", zap.Error(err))
+		return
+	}
+
+	// Sum all per-CPU values
+	var bytesTotal uint64
+	for _, value := range values {
+		bytesTotal += value
+	}
+
+	byteCounter.WithLabelValues("outside", "ingress", "upstream").Add(float64(bytesTotal))
 }
 
 func (xlbp *Xlbp) Shutdown(ctx context.Context) error {
 	xlbp.logger.Info("shutting down application")
+	xlbp.inShutdown.Store(true)
 
 	if err := xlbp.metrics.Shutdown(ctx); err != nil {
 		xlbp.logger.Error("error shutting down metrics server", zap.Error(err))
