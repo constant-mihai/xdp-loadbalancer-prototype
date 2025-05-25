@@ -1,0 +1,69 @@
+services:
+  xlbp:
+    configs:
+      - source: xlbp
+        target: /xlbp.yaml
+    privileged: true
+    cap_add:
+      - ALL
+    build:
+      ssh:
+        - default
+      dockerfile: ./Dockerfile
+      no_cache: true
+    image: xlbp
+    networks:
+      control_plane:
+        ipv4_address: 172.20.15.10
+      outside:
+        ipv4_address: 172.20.16.10
+      inside:
+        ipv4_address: 172.20.17.10
+  trex:
+    privileged: true
+    cap_add:
+      - ALL
+    build:
+      ssh:
+        - default
+      dockerfile: ./Dockerfile.trex
+    # the image can be replaced with cisco's, example here:
+    # https://trex-tgn.cisco.com/trex/doc/trex_vm_manual.html#docker
+    # image: trexcisco/trex
+    image: xlbp-trex
+    networks:
+      outside:
+        ipv4_address: 172.20.16.200
+      inside:
+        ipv4_address: 172.20.17.200
+    entrypoint: ["sleep", "infinity"]
+  # app:
+  #   image: ubuntu
+  #   entrypoint: ["sleep", "infinity"]
+  #   networks:
+  #     inside:
+  #       ipv4_address: 172.20.17.11
+
+configs:
+  xlbp:
+    file: ./xlbp.yaml
+
+networks:
+  control_plane:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.20.15.0/24"
+  outside:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.20.16.0/24"
+  inside:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.20.17.0/24"

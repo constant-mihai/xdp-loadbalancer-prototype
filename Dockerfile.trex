@@ -1,0 +1,31 @@
+# This Dockerfile will build trex. Anything above 20.04 would have compilation issues.
+FROM ubuntu:20.04 AS deps
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt update && apt install -y \
+        binutils build-essential \
+        git \
+        iproute2 \
+        pciutils python3 python3-distutils \
+        tcpdump \
+        vim \
+        zlib1g-dev
+
+FROM deps AS build
+ARG VERSION=v3.05
+
+RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+# RUN echo "StrictHostKeyChecking no" > /etc/ssh_config
+
+# TODO: the image is still quite big at 2.9GB and could use some trimming down.
+# Then again the trexcisco/trex one is pretty large as well:
+# trexcisco/trex latest 360ccbda0573 6 years ago 2.51GB
+RUN --mount=type=ssh git clone --single-branch -b ${VERSION} git@github.com:cisco-system-traffic-generator/trex-core.git && \
+    cd trex-core && \
+    cd linux_dpdk && ./b configure && ./b build && rm -rf build_dpdk/src && cd ../ && \
+    cd linux && ./b configure && ./b build
+
+COPY trex_cfg.yaml /etc/trex_cfg.yaml
+
+WORKDIR /trex-core/scripts
+# COPY ./trex-entrypoint.sh .

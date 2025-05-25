@@ -1,0 +1,8 @@
+- version       : 2 # version 2 of the configuration file
+  interfaces    : ["eth0","eth1"]  # list of the interfaces to bind run ./dpdk_nic_bind.py --status to see the list
+  port_limit      : 2 # number of ports to use valid is 2,4,6,8,10,12
+  port_info:
+          - ip: 172.20.16.200
+            default_gw: 172.20.16.10
+          - ip: 172.20.17.200
+            default_gw: 172.20.17.10
