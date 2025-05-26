@@ -263,7 +263,7 @@ func (xlbp *Xlbp) Start() error {
 	go func() {
 		xlbp.logger.Info("starting bpf metrics scraper")
 		defer xlbp.wg.Done()
-		// Create a ticker to read counters every second
+
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -295,7 +295,7 @@ func readCounters(logger *zap.Logger, counters *ebpf.Map, bytes *ebpf.Map) {
 		packetTotal += value
 	}
 
-	packetCounter.WithLabelValues("outside", "ingress", "upstream").Add(float64(packetTotal))
+	packetCounter.WithLabelValues("outside", "ingress", "upstream").Set(float64(packetTotal))
 
 	err = bytes.Lookup(&key, &values)
 	if err != nil {
@@ -309,7 +309,7 @@ func readCounters(logger *zap.Logger, counters *ebpf.Map, bytes *ebpf.Map) {
 		bytesTotal += value
 	}
 
-	byteCounter.WithLabelValues("outside", "ingress", "upstream").Add(float64(bytesTotal))
+	byteCounter.WithLabelValues("outside", "ingress", "upstream").Set(float64(bytesTotal))
 }
 
 func (xlbp *Xlbp) Shutdown(ctx context.Context) error {

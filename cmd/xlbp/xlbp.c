@@ -52,6 +52,5 @@ int xdp_prog_func(struct xdp_md *ctx) {
         __sync_fetch_and_add(counter, ctx->data_end - ctx->data);
     }
 done:
-	// Try changing this to XDP_DROP and see what happens!
 	return XDP_PASS;
 }
