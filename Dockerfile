@@ -3,6 +3,7 @@ FROM debian:bookworm AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y \
+	curl \
         iproute2 \
         tcpdump
 

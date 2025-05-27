@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,7 +24,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -verbose -tags linux bpf xlbp.c -- -I../../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -verbose -tags linux -type services_by_index_value -cflags "-g -O2" bpf xlbp.c -- -I../../headers
+
+// TODO: disabling optimizations will blow up the stack. By default this is limited to 512bytes.
+// There's still a way around this by using the llvm -bpf-stack-size flag.
+// I should make this configurable somehow.
+// -g -O0 -mllvm -bpf-stack-size=4096
 
 // TODO: I swear I did this in the past and know this was possible.
 // Providing -type counter_index for the bpf2go command should generate a counter part enum in go.
@@ -91,17 +97,20 @@ var (
 )
 
 type Xlbp struct {
-	config     *Config
-	logger     *zap.Logger
-	metrics    *http.Server
-	wg         sync.WaitGroup
-	ebpfObjs   *bpfObjects
-	link       link.Link
-	inShutdown atomic.Bool // true when server is in shutdown
+	config           *Config
+	logger           *zap.Logger
+	metrics          *http.Server
+	wg               sync.WaitGroup
+	ebpfObjs         *bpfObjects
+	link             link.Link
+	inShutdown       atomic.Bool // true when server is in shutdown
+	interfaceIndices map[string]int
 }
 
 func NewApplication() (*Xlbp, error) {
-	xlbp := &Xlbp{}
+	xlbp := &Xlbp{
+		interfaceIndices: map[string]int{},
+	}
 
 	if err := xlbp.loadConfig(); err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
@@ -154,10 +163,16 @@ func (xlbp *Xlbp) loadDataplane(ifcIp string) error {
 	if err != nil {
 		return fmt.Errorf("lookup network iface for IP %s: %w", ifcIp, err)
 	}
+	xlbp.interfaceIndices["outside"] = iface.Index
 
 	// Load pre-compiled programs into the kernel.
 	xlbp.ebpfObjs = &bpfObjects{}
-	if err := loadBpfObjects(xlbp.ebpfObjs, nil); err != nil {
+	if err := loadBpfObjects(xlbp.ebpfObjs, &ebpf.CollectionOptions{
+		Programs: ebpf.ProgramOptions{
+			LogLevel:     ebpf.LogLevelInstruction,
+			LogSizeStart: 64 * 1024 * 1024,
+		},
+	}); err != nil {
 		return fmt.Errorf("loading objects: %w", err)
 	}
 
@@ -276,6 +291,51 @@ func (xlbp *Xlbp) Start() error {
 		}
 	}()
 
+	type Service struct {
+		name string
+		ip   net.IP
+	}
+
+	// TODO: this should be the outside interface; same as for xdp_fwd_flags which
+	// uses this right now:
+	// fib_params.ifindex = ctx->ingress_ifindex;
+	mapIdx := int32(xlbp.interfaceIndices["outside"])
+	ifcIdx := int32(xlbp.interfaceIndices["outside"])
+	// TODO: traffic comes in through a different interface then expected.
+	// bpf_printk logs:
+	// Trex DP core 1-2105995 [001] ..s2. 986417.300318: bpf_trace_printk: look up tx port for ifc idx: 4
+	// Trex DP core 1-2105995 [001] ..s2. 986417.300318: bpf_trace_printk: no tx port
+	//
+	// User space logs:
+	// {"level":"info","ts":1748369952.5815506,"caller":"xlbp/xlbp.go:304","msg":"Inserting TX port for interface","interface-type":"outside","interface-index":3}
+	//
+	// The look up naturally fails.
+
+	xlbp.logger.Info("Inserting TX port for interface",
+		zap.String("interface-type", "outside"),
+		zap.Int32("interface-index", ifcIdx),
+	)
+	err := xlbp.ebpfObjs.XdpTxPorts.Update(mapIdx, ifcIdx, ebpf.UpdateAny)
+	if err != nil {
+		return fmt.Errorf("failed to populate XDP TX Ports: %w", err)
+	}
+
+	services := []Service{
+		{"service-1", net.ParseIP("172.20.17.11")},
+		{"service-2", net.ParseIP("172.20.17.12")},
+		{"service-3", net.ParseIP("172.20.17.13")},
+	}
+
+	for i, service := range services {
+		key := uint32(i)
+
+		networkOrderIP := binary.BigEndian.Uint32(service.ip.To4())
+		err := xlbp.ebpfObjs.ServicesByIndex.Update(key, networkOrderIP, ebpf.UpdateAny)
+		if err != nil {
+			return fmt.Errorf("failed to populate services map: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -330,9 +390,9 @@ func (xlbp *Xlbp) Shutdown(ctx context.Context) error {
 		return err
 	}
 
-	if err := xlbp.logger.Sync(); err != nil {
-		return err
-	}
+	//if err := xlbp.logger.Sync(); err != nil {
+	//	return err
+	//}
 
 	return nil
 }

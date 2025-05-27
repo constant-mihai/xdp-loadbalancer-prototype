@@ -12,6 +12,22 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type bpfConntrackKey struct {
+	SrcIp    uint32
+	SrcPort  uint16
+	DstPort  uint16
+	Protocol uint8
+	_        [3]byte
+}
+
+type bpfConntrackValue struct {
+	ServiceIndex  uint32
+	NattedSrcPort uint16
+	_             [2]byte
+}
+
+type bpfServicesByIndexValue struct{ Ipv4 uint32 }
+
 // loadBpf returns the embedded CollectionSpec for bpf.
 func loadBpf() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_BpfBytes)
@@ -61,8 +77,12 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	ByteCounters   *ebpf.MapSpec `ebpf:"byte_counters"`
-	PacketCounters *ebpf.MapSpec `ebpf:"packet_counters"`
+	ByteCounters    *ebpf.MapSpec `ebpf:"byte_counters"`
+	Conntrack       *ebpf.MapSpec `ebpf:"conntrack"`
+	PacketCounters  *ebpf.MapSpec `ebpf:"packet_counters"`
+	RoundRobinIndex *ebpf.MapSpec `ebpf:"round_robin_index"`
+	ServicesByIndex *ebpf.MapSpec `ebpf:"services_by_index"`
+	XdpTxPorts      *ebpf.MapSpec `ebpf:"xdp_tx_ports"`
 }
 
 // bpfVariableSpecs contains global variables before they are loaded into the kernel.
@@ -91,14 +111,22 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	ByteCounters   *ebpf.Map `ebpf:"byte_counters"`
-	PacketCounters *ebpf.Map `ebpf:"packet_counters"`
+	ByteCounters    *ebpf.Map `ebpf:"byte_counters"`
+	Conntrack       *ebpf.Map `ebpf:"conntrack"`
+	PacketCounters  *ebpf.Map `ebpf:"packet_counters"`
+	RoundRobinIndex *ebpf.Map `ebpf:"round_robin_index"`
+	ServicesByIndex *ebpf.Map `ebpf:"services_by_index"`
+	XdpTxPorts      *ebpf.Map `ebpf:"xdp_tx_ports"`
 }
 
 func (m *bpfMaps) Close() error {
 	return _BpfClose(
 		m.ByteCounters,
+		m.Conntrack,
 		m.PacketCounters,
+		m.RoundRobinIndex,
+		m.ServicesByIndex,
+		m.XdpTxPorts,
 	)
 }
 
