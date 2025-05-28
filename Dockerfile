@@ -4,8 +4,8 @@ FROM debian:bookworm AS deps
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y \
 	curl \
-        iproute2 \
-        tcpdump
+	iproute2 \
+	tcpdump
 
 # Build
 FROM public.ecr.aws/docker/library/golang:1.23.3-bookworm AS build
