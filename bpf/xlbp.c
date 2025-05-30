@@ -6,6 +6,10 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#include "counters.c"
+#include "ingress_external.c"
+#include "ingress_internal.c"
+
 #define AF_INET 2
 #define AF_INET6 10
 
@@ -26,32 +30,6 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define ETH_P_IPV6 0x86DD
 #define ETH_ALEN 6
 
-struct foo {
-    __u32 a;
-};
-
-// TODO: I would like to have separate counters for every interface.
-enum counter_index {
-    INGRESS_IDX = 0,
-    EGRESS_IDX = 1,
-    DROP_IDX = 2,
-    
-    MAX_COUNTERS = 3
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, MAX_COUNTERS);
-    __type(key, __u32);
-    __type(value, __u64);
-} packet_counters SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, MAX_COUNTERS);
-    __type(key, __u32);
-    __type(value, __u64);
-} byte_counters SEC(".maps");
 
 #define MAX_SERVICES 512
 
@@ -103,21 +81,6 @@ struct {
 	__uint(value_size, sizeof(int));
 	__uint(max_entries, 64);
 } xdp_tx_ports SEC(".maps");
-
-static __always_inline void update_counters(struct xdp_md *ctx, __u32 key)
-{
-    __u64 *counter;
-    
-    counter = bpf_map_lookup_elem(&packet_counters, &key);
-    if (counter) {
-        __sync_fetch_and_add(counter, 1);
-    }
-    
-    counter = bpf_map_lookup_elem(&byte_counters, &key);
-    if (counter) {
-        __sync_fetch_and_add(counter, ctx->data_end - ctx->data);
-    }
-}
 
 static __always_inline int ip_decrease_ttl(struct iphdr *iph)
 {
@@ -293,7 +256,7 @@ static __always_inline int get_ports(struct iphdr *iph, void *data_end, __u16 *s
 }
 
 SEC("xdp")
-int xdp_prog_func(struct xdp_md *ctx) {
+int load_balance(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
@@ -380,7 +343,6 @@ int xdp_prog_func(struct xdp_md *ctx) {
     if (ret == XDP_DROP)
         goto drop;
 
-done:
 	return XDP_PASS;
 drop:
     update_counters(ctx, DROP_IDX);

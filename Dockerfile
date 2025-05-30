@@ -1,5 +1,5 @@
 # Deps
-FROM debian:bookworm AS deps
+FROM ubuntu:latest AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y \

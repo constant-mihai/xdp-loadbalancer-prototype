@@ -1,0 +1,12 @@
+services:
+  xlbp:
+    build:
+      dockerfile: ./Dockerfile.debug
+      no_cache: true
+    image: xlbp-debug
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/workspace
+      - ./xlbp.yaml:/etc/xlbp/xlbp.yaml
+    working_dir: /workspace

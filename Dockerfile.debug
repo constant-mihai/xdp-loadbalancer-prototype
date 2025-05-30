@@ -1,0 +1,53 @@
+# Deps
+FROM ubuntu:latest AS deps
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt update && apt install -y \
+	build-essential libbpf-dev clang llvm linux-tools-common \
+    curl \
+    ca-certificates \
+    git \
+    iproute2 \
+    tcpdump \
+    vim
+
+# TODO: this is for debugging purposes and should be moved
+# into a dedicated debug container.
+ENV GOLANG_VERSION=1.23.3
+RUN curl -L https://go.dev/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
+ENV GOPATH=/root/go
+ENV PATH="${GOPATH}/bin:${PATH}"
+
+# Build
+FROM public.ecr.aws/docker/library/golang:1.23.3-bookworm AS build
+
+RUN echo "StrictHostKeyChecking no" > /etc/ssh_config
+
+WORKDIR /build
+
+COPY . .
+
+# TODO: should go generate be called here?
+# If yes, there are some deps that need to be installed in the build layer.
+RUN --mount=type=ssh \
+            go build -ldflags \
+            "-X main.GitCommit=$(git rev-parse --short HEAD) \
+            -X main.GitBranch=$(git rev-parse --abbrev-ref HEAD) \
+            -X main.ApplicationVersion=$(git describe --always)" \
+            ./cmd/xlbp
+
+# Release
+FROM deps AS release
+
+COPY --from=build /build/xlbp .
+COPY --from=build /build/xlbp.yaml /etc/xlbp/
+
+# Make sure git recognizes the directory as safe
+# error obtaining VCS status: exit status 128
+#         Use -buildvcs=false to disable VCS stamping.
+# workspace is the directory configured in docker compose.
+RUN git config --global --add safe.directory /workspace
+
+ENTRYPOINT [ "/bin/bash" ]

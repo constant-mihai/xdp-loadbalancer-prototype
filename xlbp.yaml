@@ -6,6 +6,7 @@ metrics:
   host: 172.20.15.10
   port: 9090
 
-xlbp:
-  outside_ip: 172.20.16.10
-  inside_ip: 172.20.17.10
+dataplane:
+  interfaces:
+    external: 172.20.16.10
+    internal: 172.20.17.10
