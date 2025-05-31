@@ -70,7 +70,6 @@ type xlbpSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xlbpProgramSpecs struct {
-	IngressExternal *ebpf.ProgramSpec `ebpf:"ingress_external"`
 	IngressInternal *ebpf.ProgramSpec `ebpf:"ingress_internal"`
 	LoadBalance     *ebpf.ProgramSpec `ebpf:"load_balance"`
 }
@@ -142,14 +141,12 @@ type xlbpVariables struct {
 //
 // It can be passed to loadXlbpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xlbpPrograms struct {
-	IngressExternal *ebpf.Program `ebpf:"ingress_external"`
 	IngressInternal *ebpf.Program `ebpf:"ingress_internal"`
 	LoadBalance     *ebpf.Program `ebpf:"load_balance"`
 }
 
 func (p *xlbpPrograms) Close() error {
 	return _XlbpClose(
-		p.IngressExternal,
 		p.IngressInternal,
 		p.LoadBalance,
 	)

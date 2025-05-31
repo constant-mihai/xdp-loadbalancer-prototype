@@ -104,12 +104,20 @@ func LoadDataplane(config Config, logger *zap.Logger) (*Dataplane, error) {
 		return nil, fmt.Errorf("error getting collection: %w", err)
 	}
 
+	// Note: my initial intention was to use multiple interfaces and load
+	// different programs on each one. This can help separate logic and simplify
+	// these programs (for example: an ingress program on a public facing interface
+	// will possibly have a different implementation than a program on an internal facing
+	// interface). However, if I would like to deploy the app in kubernets,
+	// having multiple interfaces might be problematic.
+	// Not sure if this will ever be needed, but the configuration file can dictate
+	// which program gets loaded where.
 	links := map[string]link.Link{}
 	attachmentMappings := map[string]string{
-		"ingress_external": "external",
-		"ingress_internal": "internal",
+		"external": "ingress",
+		"internal": "ingress",
 	}
-	for programName, ifcName := range attachmentMappings {
+	for ifcName, programName := range attachmentMappings {
 		program, found := collection.Programs[programName]
 		if !found {
 			return nil, fmt.Errorf("program %s not found", programName)

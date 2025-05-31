@@ -7,8 +7,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "counters.c"
-#include "ingress_external.c"
-#include "ingress_internal.c"
+#include "ingress.c"
 
 #define AF_INET 2
 #define AF_INET6 10
