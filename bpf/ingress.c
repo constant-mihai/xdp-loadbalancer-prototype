@@ -7,14 +7,15 @@
 #include <bpf/bpf_helpers.h>
 
 SEC("xdp")
-int ingress_internal(struct xdp_md *ctx) {
+int ingress(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
+    update_counters_2(ctx, INGRESS_IDX);
 
 pass:
-    update_counters(ctx, PASSED_IDX);
+    update_counters_2(ctx, PASSED_IDX);
     return XDP_PASS;
 drop:
-    update_counters(ctx, DROP_IDX);
+    update_counters_2(ctx, DROP_IDX);
     return XDP_DROP;
 }

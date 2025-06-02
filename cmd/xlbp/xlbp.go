@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cilium/ebpf/rlimit"
 	"github.com/constant-mihai/xdp-loadbalancer-prototype/pkg/bpf"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -194,6 +196,10 @@ func (xlbp *Xlbp) Shutdown(ctx context.Context) error {
 }
 
 func main() {
+	if err := rlimit.RemoveMemlock(); err != nil {
+		log.Fatal(err)
+	}
+
 	xlbp, err := NewApplication()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create application: %v\n", err)

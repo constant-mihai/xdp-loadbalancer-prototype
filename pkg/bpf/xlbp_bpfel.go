@@ -70,20 +70,22 @@ type xlbpSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xlbpProgramSpecs struct {
-	IngressInternal *ebpf.ProgramSpec `ebpf:"ingress_internal"`
-	LoadBalance     *ebpf.ProgramSpec `ebpf:"load_balance"`
+	Ingress     *ebpf.ProgramSpec `ebpf:"ingress"`
+	LoadBalance *ebpf.ProgramSpec `ebpf:"load_balance"`
 }
 
 // xlbpMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type xlbpMapSpecs struct {
-	ByteCounters    *ebpf.MapSpec `ebpf:"byte_counters"`
-	Conntrack       *ebpf.MapSpec `ebpf:"conntrack"`
-	PacketCounters  *ebpf.MapSpec `ebpf:"packet_counters"`
-	RoundRobinIndex *ebpf.MapSpec `ebpf:"round_robin_index"`
-	ServicesByIndex *ebpf.MapSpec `ebpf:"services_by_index"`
-	XdpTxPorts      *ebpf.MapSpec `ebpf:"xdp_tx_ports"`
+	ByteCounters            *ebpf.MapSpec `ebpf:"byte_counters"`
+	Conntrack               *ebpf.MapSpec `ebpf:"conntrack"`
+	InterfaceByteCounters   *ebpf.MapSpec `ebpf:"interface_byte_counters"`
+	InterfacePacketCounters *ebpf.MapSpec `ebpf:"interface_packet_counters"`
+	PacketCounters          *ebpf.MapSpec `ebpf:"packet_counters"`
+	RoundRobinIndex         *ebpf.MapSpec `ebpf:"round_robin_index"`
+	ServicesByIndex         *ebpf.MapSpec `ebpf:"services_by_index"`
+	XdpTxPorts              *ebpf.MapSpec `ebpf:"xdp_tx_ports"`
 }
 
 // xlbpVariableSpecs contains global variables before they are loaded into the kernel.
@@ -112,18 +114,22 @@ func (o *xlbpObjects) Close() error {
 //
 // It can be passed to loadXlbpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xlbpMaps struct {
-	ByteCounters    *ebpf.Map `ebpf:"byte_counters"`
-	Conntrack       *ebpf.Map `ebpf:"conntrack"`
-	PacketCounters  *ebpf.Map `ebpf:"packet_counters"`
-	RoundRobinIndex *ebpf.Map `ebpf:"round_robin_index"`
-	ServicesByIndex *ebpf.Map `ebpf:"services_by_index"`
-	XdpTxPorts      *ebpf.Map `ebpf:"xdp_tx_ports"`
+	ByteCounters            *ebpf.Map `ebpf:"byte_counters"`
+	Conntrack               *ebpf.Map `ebpf:"conntrack"`
+	InterfaceByteCounters   *ebpf.Map `ebpf:"interface_byte_counters"`
+	InterfacePacketCounters *ebpf.Map `ebpf:"interface_packet_counters"`
+	PacketCounters          *ebpf.Map `ebpf:"packet_counters"`
+	RoundRobinIndex         *ebpf.Map `ebpf:"round_robin_index"`
+	ServicesByIndex         *ebpf.Map `ebpf:"services_by_index"`
+	XdpTxPorts              *ebpf.Map `ebpf:"xdp_tx_ports"`
 }
 
 func (m *xlbpMaps) Close() error {
 	return _XlbpClose(
 		m.ByteCounters,
 		m.Conntrack,
+		m.InterfaceByteCounters,
+		m.InterfacePacketCounters,
 		m.PacketCounters,
 		m.RoundRobinIndex,
 		m.ServicesByIndex,
@@ -141,13 +147,13 @@ type xlbpVariables struct {
 //
 // It can be passed to loadXlbpObjects or ebpf.CollectionSpec.LoadAndAssign.
 type xlbpPrograms struct {
-	IngressInternal *ebpf.Program `ebpf:"ingress_internal"`
-	LoadBalance     *ebpf.Program `ebpf:"load_balance"`
+	Ingress     *ebpf.Program `ebpf:"ingress"`
+	LoadBalance *ebpf.Program `ebpf:"load_balance"`
 }
 
 func (p *xlbpPrograms) Close() error {
 	return _XlbpClose(
-		p.IngressInternal,
+		p.Ingress,
 		p.LoadBalance,
 	)
 }

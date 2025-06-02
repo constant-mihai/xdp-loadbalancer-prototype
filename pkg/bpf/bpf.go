@@ -17,43 +17,10 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
 )
 
-// TODO: I swear I did this in the past and know this was possible.
-// Providing -type counter_index for the bpf2go command should generate a counter part enum in go.
-// Instead I keep getting:
-// Error: collect C types: type name counter_index: not found
-// Until I figure out what's wrong this needs to be maintained by hand.
-type CounterIndex uint32
-
-const (
-	IngressPacketsIdx CounterIndex = 0
-	EgressPacketsIdx  CounterIndex = 1
-	DropPacketsIdx    CounterIndex = 2
-)
-
-var (
-	packetCounter = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "xlbp",
-			Name:      "external_interface_packets",
-			Help:      "External interface",
-		},
-		[]string{"name", "flow", "direction"},
-	)
-
-	byteCounter = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "xlbp",
-			Name:      "external_interface_bytes",
-			Help:      "External interface",
-		},
-		[]string{"name", "flow", "direction"},
-	)
-)
+const MaxInterfaces uint32 = 16
 
 type Config struct {
 	Interfaces map[string]string `mapstructure:"interfaces"`
@@ -68,15 +35,17 @@ type Dataplane struct {
 	// - xlbpObjects.Close() propagates the error, collection doesn't.
 	// - I can iterate through collection objects and can access them via their names from C.
 	// The only benefit for using the collection is that I can dynamically iterate
-	// through the map and rearrange the programs and maps into different structure if I want.
+	// through the map and rearrange the programs and maps into different structure if I want,
+	// or, for example, to populate a BPF_MAP_TYPE_PROG_ARRAY.
 	// The only downside for using the collection is that the error is not propagated
 	// on close.
-	collection *ebpf.Collection
-	interfaces map[string]*net.Interface
-	links      map[string]link.Link
-	wg         sync.WaitGroup
-	inShutdown atomic.Bool
-	logger     *zap.Logger
+	collection        *ebpf.Collection
+	interfaces        map[string]*net.Interface
+	links             map[string]link.Link
+	wg                sync.WaitGroup
+	inShutdown        atomic.Bool
+	logger            *zap.Logger
+	interfaceCounters *interfaceCounters
 }
 
 type Service struct {
@@ -97,7 +66,8 @@ func LoadDataplane(config Config, logger *zap.Logger) (*Dataplane, error) {
 
 	collection, err := ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{
 		Programs: ebpf.ProgramOptions{
-			LogLevel: ebpf.LogLevelInstruction,
+			LogLevel:     ebpf.LogLevelInstruction,
+			LogSizeStart: 1024,
 		},
 	})
 	if err != nil {
@@ -145,11 +115,32 @@ func LoadDataplane(config Config, logger *zap.Logger) (*Dataplane, error) {
 		links[programName] = link
 	}
 
+	for _, ifc := range ifaces {
+		logger.Info("Inserting TX port for interface",
+			zap.String("interface-type", "external"),
+			zap.Int("interface-index", ifc.Index),
+		)
+		key := uint32(ifc.Index)
+		value := uint32(ifc.Index)
+		err := collection.Maps["xdp_tx_ports"].Update(key, value, ebpf.UpdateAny)
+		if err != nil {
+			return nil, fmt.Errorf("failed to populate XDP TX Ports: %w", err)
+		}
+	}
+
+	interfaceCounters, err := newInterfaceCounters(logger, collection.Maps["interface_packet_counters"],
+		collection.Maps["interface_byte_counters"], ifaces)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize counters")
+	}
+
+	// TODO: close counters
 	return &Dataplane{
-		interfaces: ifaces,
-		logger:     logger,
-		collection: collection,
-		links:      links,
+		interfaces:        ifaces,
+		logger:            logger,
+		collection:        collection,
+		links:             links,
+		interfaceCounters: interfaceCounters,
 	}, nil
 }
 
@@ -164,23 +155,13 @@ func (dp *Dataplane) Start() error {
 			if dp.inShutdown.Load() {
 				return
 			}
+
 			<-ticker.C
-			readCounters(dp.logger, dp.collection.Maps["packet_counters"], dp.collection.Maps["byte_counters"])
+			// read the interface counters
+			dp.interfaceCounters.forEachInnerMap(dp.interfaceCounters.interfacePacketCounters, setPrometheusGauge, packetCounter)
+			dp.interfaceCounters.forEachInnerMap(dp.interfaceCounters.interfaceByteCounters, setPrometheusGauge, byteCounter)
 		}
 	}()
-
-	for _, ifc := range dp.interfaces {
-		dp.logger.Info("Inserting TX port for interface",
-			zap.String("interface-type", "external"),
-			zap.Int("interface-index", ifc.Index),
-		)
-		key := uint32(ifc.Index)
-		value := uint32(ifc.Index)
-		err := dp.collection.Maps["xdp_tx_ports"].Update(key, value, ebpf.UpdateAny)
-		if err != nil {
-			return fmt.Errorf("failed to populate XDP TX Ports: %w", err)
-		}
-	}
 
 	services := []Service{
 		{"service-1", net.ParseIP("172.20.17.11")},
@@ -217,6 +198,8 @@ func (dp *Dataplane) Close() error {
 		dp.collection.Close()
 	}
 
+	dp.interfaceCounters.close()
+
 	return nil
 }
 
@@ -228,78 +211,31 @@ func getInterfacesByIPs(ipMap map[string]string) (map[string]*net.Interface, err
 		return nil, fmt.Errorf("failed to get interfaces: %w", err)
 	}
 
-	// Create a reverse map: IP -> config key (e.g., "10.0.0.0" -> "external")
-	ipToKey := make(map[string]string)
-	for key, ip := range ipMap {
-		ipToKey[ip] = key
-	}
-
-	for _, iface := range interfaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
+	for configuredIfaceName, configuredIp := range ipMap {
+		for _, iface := range interfaces {
+			addrs, err := iface.Addrs()
 			if err != nil {
-				ip = net.ParseIP(addr.String())
+				continue
 			}
 
-			if ip != nil {
-				if key, found := ipToKey[ip.String()]; found {
-					// Create a copy of the interface to avoid pointer issues
-					ifaceCopy := iface
-					result[key] = &ifaceCopy
-					// This IP was found, pop it from the map.
-					delete(ipToKey, ip.String())
+		AddrLoop:
+			for _, addr := range addrs {
+				ip, _, err := net.ParseCIDR(addr.String())
+				if err != nil {
+					ip = net.ParseIP(addr.String())
+				}
+
+				if ip != nil {
+					if configuredIp == ip.String() {
+						ifaceCopy := iface
+						result[configuredIfaceName] = &ifaceCopy
+						break AddrLoop
+					}
 				}
 			}
-		}
 
-		if len(ipToKey) == 0 {
-			break
-		}
-	}
-
-	if len(ipToKey) != 0 {
-		for k, v := range ipToKey {
-			return nil, fmt.Errorf("interface for %s:%s not found", v, k)
 		}
 	}
 
 	return result, nil
-}
-
-func readCounters(logger *zap.Logger, counters *ebpf.Map, bytes *ebpf.Map) {
-	key := uint32(IngressPacketsIdx)
-
-	var values []uint64
-	err := counters.Lookup(&key, &values)
-	if err != nil {
-		logger.Error("Failed to read packet counter", zap.Error(err))
-		return
-	}
-
-	// Sum all per-CPU values
-	var packetTotal uint64
-	for _, value := range values {
-		packetTotal += value
-	}
-
-	packetCounter.WithLabelValues("external", "ingress", "upstream").Set(float64(packetTotal))
-
-	err = bytes.Lookup(&key, &values)
-	if err != nil {
-		logger.Error("Failed to read byte counter", zap.Error(err))
-		return
-	}
-
-	// Sum all per-CPU values
-	var bytesTotal uint64
-	for _, value := range values {
-		bytesTotal += value
-	}
-
-	byteCounter.WithLabelValues("external", "ingress", "upstream").Set(float64(bytesTotal))
 }
