@@ -158,8 +158,8 @@ func (dp *Dataplane) Start() error {
 
 			<-ticker.C
 			// read the interface counters
-			dp.interfaceCounters.forEachInnerMap(dp.interfaceCounters.interfacePacketCounters, setPrometheusGauge, packetCounter)
-			dp.interfaceCounters.forEachInnerMap(dp.interfaceCounters.interfaceByteCounters, setPrometheusGauge, byteCounter)
+			dp.interfaceCounters.forEachInnerMap(dp.interfaceCounters.interfacePacketCounters, packetCounter)
+			dp.interfaceCounters.forEachInnerMap(dp.interfaceCounters.interfaceByteCounters, byteCounter)
 		}
 	}()
 

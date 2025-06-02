@@ -176,8 +176,8 @@ func (ic *interfaceCounters) scrape() {
 	for {
 		<-ticker.C
 		// read the interface counters
-		ic.forEachInnerMap(ic.interfacePacketCounters, setPrometheusGauge, packetCounter)
-		ic.forEachInnerMap(ic.interfaceByteCounters, setPrometheusGauge, byteCounter)
+		ic.forEachInnerMap(ic.interfacePacketCounters, packetCounter)
+		ic.forEachInnerMap(ic.interfaceByteCounters, byteCounter)
 	}
 }
 
@@ -198,7 +198,7 @@ func (ic *interfaceCounters) scrape() {
 //
 //		return innerMap, nil
 //	}
-func (ic *interfaceCounters) forEachInnerMap(outterMap *ebpf.Map, update func(logger *zap.Logger, ifcIdx uint32, innerMap *ebpf.Map, gauge *prometheus.GaugeVec), gauge *prometheus.GaugeVec) {
+func (ic *interfaceCounters) forEachInnerMap(outterMap *ebpf.Map, gauge *prometheus.GaugeVec) {
 	mapIter := outterMap.Iterate()
 	var outerMapKey uint32
 	var innerMapID ebpf.MapID
@@ -212,7 +212,7 @@ func (ic *interfaceCounters) forEachInnerMap(outterMap *ebpf.Map, update func(lo
 			continue
 		}
 
-		update(ic.logger, outerMapKey, innerMap, gauge)
+		setPrometheusGauge(ic.logger, outerMapKey, innerMap, gauge)
 	}
 }
 
